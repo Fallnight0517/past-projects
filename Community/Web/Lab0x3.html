@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+	<head>
+		<meta charset="utf-8">
+		<title>TRY!!</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1" >
+		<style>
+			h1{
+				color: pink;
+				text-shadow: 3px 3px gray;
+			}
+			h2{
+				text-shadow: 3px 3px gray;
+			}
+			#pic{ 
+			    animation-name: MovePic;
+			    animation-duration: 1.5s; 
+			    animation-delay: 0.2s; 
+			    animation-iteration-count: infinite; 
+			}
+
+			@keyframes MovePic{ 
+			    from{
+			        transform: translateY(-20px);
+			    }
+			    50%{
+			        transform: translateY(0px);
+			    }
+			    to{
+			        transform: translateY(-20px);
+			    }
+			}
+		</style>
+		<script>
+			function sent(){
+				var name = document.getElementById("inputname").value;
+				document.getElementById("who").innerText = name;
+			}
+		</script>
+	</head>
+	<body style="background-color: powderblue;">
+		<h1>fallnight</h1>
+		<img src="https://i.imgur.com/bp1EmIa.jpg" width="30%" id=pic>
+		<h2>輔大資工二年級</h2>
+		<br>
+		<h1>Interest</h1>
+		<ul>
+			<li>遊戲 (原神啟動!</li>
+			<li>音樂</li>
+			<li>追劇</li>
+			<li>追星</li>
+		</ul>
+		<br>
+		<h1>Who are u?</h1>
+		<input id=inputname type="text">
+		<button onclick="sent()">Hi</button>
+		<!--<input type="submit" onclick="sent()" value="Hi">-->
+		<br>
+		<label id=who>(你誰)</label>
+		<label>, hello!</label>
+	</body>
+</html>

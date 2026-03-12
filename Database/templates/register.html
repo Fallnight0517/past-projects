@@ -1,0 +1,46 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-header bg-primary text-white">
+                <h4 class="mb-0">註冊會員</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="/register">
+                    
+                    <div class="mb-3">
+                        <label for="name" class="form-label">姓名 (Name)</label>
+                        <input type="text" class="form-control" id="name" name="name" placeholder="請輸入您的真實姓名" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="email" class="form-label">電子信箱 (Email)</label>
+                        <input type="email" class="form-control" id="email" name="email" placeholder="name@example.com" required>
+                        <div class="form-text">這將是您的登入帳號</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="password" class="form-label">設定密碼 (Password)</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="phone" class="form-label">聯絡電話 (Phone)</label>
+                        <input type="tel" class="form-control" id="phone" name="phone" placeholder="09xx-xxx-xxx">
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary btn-lg">確認註冊</button>
+                    </div>
+                </form>
+            </div>
+            <div class="card-footer text-center">
+                已經有帳號了嗎？ <a href="/login">點此登入</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
