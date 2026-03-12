@@ -19,8 +19,8 @@ def get_db_connection():
             r'DRIVER={ODBC Driver 17 for SQL Server};'
             r'SERVER=localhost\SQLEXPRESS;'
             r'DATABASE=ExhibitionTicketSystem;'
-            r'UID=root;'
-            r'PWD=wendy940704;'
+            r'UID=XXXXX;'
+            r'PWD=XXXXX;'
         )
         print("資料庫連線成功！")
     except Exception as e:
