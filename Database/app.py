@@ -1,26 +1,106 @@
+'''
+io: 將 QR code 圖片存在記憶體緩衝區(BytesIO)，直接傳給瀏覽器，不放在硬碟內
+os: 操作檔案路徑、建立資料夾、刪除檔案
+uuid: 用於產生唯一的亂碼 ID 給票卷以及上傳圖片的檔名，避免重複
+qrcode: 用於生成 QR code 圖片
+pyodbc: 用於連接 Python 與 資料庫，執行 SQL 指令
+datetime, timedelta: 用於判斷展覽是否過期或者場次是否開始，以及登入閒置自動登出
+flask:
+    Flask: 建立網頁應用程式物件 (app)
+    render_template: 將資料填入 HTML 檔案並回傳給瀏覽器
+    request: 接收使用者傳來的資料 (表單 form, 網址參數 args, 檔案 files)
+    redirect, url_for: 讓瀏覽器跳轉到別的網址
+    session: 用來記住使用者狀態，例如: 購物車內容
+    flash: 在跳頁時顯示一次性的提示訊息，例如: 登入成功
+    send_file: 用來傳送圖片檔案給瀏覽器
+werkzeug.security:
+    generate_password_hash: 用於將密碼經過雜湊，再存入資料庫
+    check_password_hash: 檢查輸入的密碼與資料庫的雜湊是否相符
+werkzeug.utils:
+    secure_filename: 將上傳的圖片檔名過濾成安全格式
+'''
+
 import io
 import os
 import uuid
 import qrcode
 import pyodbc
-import pymysql.cursors
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
-app = Flask(__name__)
-app.secret_key = os.urandom(24)  # 請修改為隨機字串以確保安全
+app = Flask(__name__) # 讓 flask 知道當前檔案(app.py)位置
+app.secret_key = os.urandom(24)  # 設定隨機亂數，會附加在傳給瀏覽器的 Cookie 後面，用於登入、購物車要記住不同的使用者狀態
 app.permanent_session_lifetime = timedelta(minutes=30)  # 設定閒置 30 分鐘自動登出
+
+# 圖片上傳設定
+# 設定上傳的圖片要被存到哪個資料夾
+#               把路徑拼起來 | 只取資料夾的路徑 | 找出某檔案的絕對路徑 | __file__ 代表目前的檔案(app.py) | 要經過的各個資料夾
+UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'exhibitions')
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'} # 設定允許的圖片格式
+
+# 確保上傳圖片的資料夾存在
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# app.config 是用來存放整個網站的設定值的字典
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER # 紀錄上傳資料夾的路徑
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 限制上傳檔案大小為 16MB
+
+
+def allowed_file(filename):
+    """檢查檔案副檔名是否允許"""
+    # 檢查檔名是否有副檔名的小數點 | 從右邊r 以 . 切割1刀 | [1] 取得切割後的列表的第二個元素(也就是副檔名) | .lower() 轉換成小寫 | in ALLOWED_EXTENSIONS 檢查拿到的副檔名有沒有在前面設定的允許清單內
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def save_exhibition_image(file, exhibition_id=None):
+    """
+    儲存展覽圖片
+    回傳相對路徑 (用於存入資料庫)
+    """
+    if file and allowed_file(file.filename):
+        # 產生唯一檔名避免覆蓋
+        ext = file.filename.rsplit('.', 1)[1].lower() # 分割副檔名存在 ext
+        if exhibition_id: # 如果有展覽id，就將展覽id融入圖片名稱
+            filename = f"exhibition_{exhibition_id}_{uuid.uuid4().hex[:8]}.{ext}" # [:8] 只取 uuid 產生的32個字元中的前8個字
+        else:
+            filename = f"exhibition_{uuid.uuid4().hex}.{ext}"
+        
+        filename = secure_filename(filename)
+        # 以前面儲存的上傳圖片的資料夾檔案路徑，結合檔名，儲存圖片
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+        
+        # 回傳相對路徑 (給前端用)
+        return f"/static/uploads/exhibitions/{filename}"
+    return None
+
+
+def delete_old_image(image_path):
+    """刪除舊圖片檔案"""
+    # 檢查圖片是否為我們自己上傳的圖片，圖片是否存在 且 是否在我們設定的路徑之下
+    if image_path and image_path.startswith('/static/uploads/exhibitions/'):
+        # 圖片檔案路徑中，'刪除'路徑，只保存檔名
+        filename = image_path.replace('/static/uploads/exhibitions/', '')
+        # 結合檔名與設定的路徑，讓os知道圖片所在的絕對路徑
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if os.path.exists(filepath): # 如果存在就刪掉，否則報錯
+            try:
+                os.remove(filepath)
+            except Exception as e:
+                print(f"刪除舊圖片失敗: {e}")
 
 
 def get_db_connection():
     try:
+        # 嘗試連接資料庫
         return pyodbc.connect(
-            r'DRIVER={ODBC Driver 17 for SQL Server};'
-            r'SERVER=localhost\SQLEXPRESS;'
-            r'DATABASE=ExhibitionTicketSystem;'
-            r'UID=XXXXX;'
-            r'PWD=XXXXX;'
+            r'DRIVER={ODBC Driver 17 for SQL Server};' # 以 ODBC 為驅動程式
+            r'SERVER=localhost;' # SQL Server 是在本地端(localhost)
+            r'DATABASE=ExhibitionTicketSystem;' # 在 SQL Server 內，要使用的資料庫名稱
+            r'UID=XXXX;' # 程式進入資料庫的身分與密碼，需要提前在 SQL Server 那邊設定
+            r'PWD=XXXX;'
         )
         print("資料庫連線成功！")
     except Exception as e:
@@ -28,7 +108,8 @@ def get_db_connection():
         return None
 
 def to_dict(cursor, row):
-    """將 pyodbc 的 Row 轉換成 Dictionary"""
+    """將 SQL Server 傳回的資料從 Tuple 轉為 字典"""
+    # dict轉為字典 | zip 將欄位名稱與資料連起來 | cursor.description 儲存了SQL查詢的欄位資訊 | 資料的型態 Row(Tuple) 給zip串資料與欄位
     return dict(zip([column[0] for column in cursor.description], row))
 
 # 輔助函式：檢查是否為管理員
@@ -50,25 +131,38 @@ def inject_cart_count():
 # --- 首頁：展覽列表 (含搜尋 & 時間檢查) ---
 @app.route('/')
 def index():
-    keyword = request.args.get('q', '')  # 取得搜尋關鍵字
+    # 取得搜尋關鍵字，'q'抓取網址問號後面的參數q的值，''如果只是剛進首頁就會是空字串
+    keyword = request.args.get('q', '')
 
     conn = get_db_connection()
-    if not conn: return "DB Connection Error", 500
+    if not conn: return "DB Connection Error", 500 # 如果連接不到 SQL Server 就回傳 500 狀態碼並顯示錯誤
     try:
-        with conn.cursor() as cursor:
-            if keyword:
+        with conn.cursor() as cursor: # 用於向資料庫申請一個"游標 (Cursor)"，用來執行 SQL 指令並取得結果
+            if keyword: # 如果要查詢東西，也就是keyword存在的話
                 # 搜尋標題或地點
-                sql = "SELECT * FROM Exhibitions WHERE status = 'Published' AND (title LIKE ? OR location LIKE ?)"
-                search_term = f"%{keyword}%"
-                cursor.execute(sql, (search_term, search_term))
+                # 只抓取以上架或以結束的展覽(為了過濾草稿)，搜尋標題或地點符合關鍵字的
+                sql = """
+                    SELECT * FROM Exhibitions
+                    WHERE status IN ('Published', 'Ended') AND (title LIKE ? OR location LIKE ?)
+                    ORDER BY CASE WHEN status = 'Ended' THEN 1 ELSE 0 END, start_date DESC
+                """
+                search_term = f"%{keyword}%" # 加上%可以在SQL代表任意字元
+                cursor.execute(sql, (search_term, search_term)) # 執行 SQL 語句
             else:
-                cursor.execute("SELECT * FROM Exhibitions WHERE status = 'Published'")
+                # 顯示所有上架中與已結束的展覽 (過期的排最後)
+                cursor.execute("""
+                    SELECT * FROM Exhibitions 
+                    WHERE status IN ('Published', 'Ended') 
+                    ORDER BY CASE WHEN status = 'Ended' THEN 1 ELSE 0 END, start_date DESC
+                """)
 
+            # 一次存取SQL傳回的所有資料
             rows = cursor.fetchall()
-            # ★ 補上轉換邏輯：將 List of Tuples 轉為 List of Dicts
+            # 補上轉換邏輯：將 List of Tuples 轉為 List of Dicts
             exhibitions = [to_dict(cursor, row) for row in rows]
 
-        # ★ 傳入 now 讓前端判斷是否顯示「已結束」
+        # 傳入 now 讓前端判斷是否顯示「已結束」
+        # exhibitons列出剛剛抓取的展覽列表，keyword傳回搜尋框
         return render_template('index.html', exhibitions=exhibitions, keyword=keyword, now=datetime.now())
     finally:
         conn.close()
@@ -171,7 +265,7 @@ def detail(id):
 
                 session_id = request.form.get('session_id')
 
-                # ★ 後端防呆：嚴格檢查過期
+                # 後端防呆：嚴格檢查過期
                 # 同時查詢「場次時間」與「展覽結束日期」
                 sql = """
                     SELECT S.session_time, E.end_date 
@@ -183,17 +277,17 @@ def detail(id):
                 row = cursor.fetchone()
                 if row: row = to_dict(cursor, row)  # 一行搞定轉換
                 else:
-                    flash("❌ 錯誤：找不到場次資訊")
+                    flash("錯誤：找不到場次資訊")
                     return redirect(request.url)
 
                 # 1. 檢查展覽是否已結束
                 if row['end_date'] < datetime.now().date():
-                    flash("❌ 很抱歉，此展覽活動已完全結束，無法購票！")
+                    flash("很抱歉，此展覽活動已完全結束，無法購票！")
                     return redirect(request.url)
 
                 # 2. 檢查場次時間是否已過
                 if row['session_time'] < datetime.now():
-                    flash("❌ 錯誤：該場次時間已過，無法購買！")
+                    flash("錯誤：該場次時間已過，無法購買！")
                     return redirect(request.url)
 
                 # 建立商品物件
@@ -213,7 +307,7 @@ def detail(id):
                     cart.append(item_template.copy())
 
                 session['cart'] = cart
-                flash(f'已將 {quantity} 張票加入購物車 🛒')
+                flash(f'已將 {quantity} 張票加入購物車')
                 return redirect(url_for('index'))
 
             # === GET: 顯示頁面 ===
@@ -289,13 +383,8 @@ def checkout():
                 order_id = int(result[0])
             else:
                 raise Exception("無法取得訂單 ID")
-
-            # 2. 建立支付紀錄
-            cursor.execute(
-                "INSERT INTO Payments (order_id, payment_method, amount, status) VALUES (?, 'Credit Card', ?, 'Success')",
-                (order_id, total_amount))
-
-            # 3. 處理每一張票 (扣庫存 + 建票)
+                
+            # 2. 處理每一張票 (扣庫存 + 建票)
             for item in cart:
                 session_id = item['session_id']
                 ticket_type_id = item['ticket_type_id']
@@ -423,14 +512,14 @@ def admin_dashboard():
             cursor.execute("SELECT * FROM Exhibitions ORDER BY exhibition_id DESC")
             
             rows = cursor.fetchall()
-            # ★ 補上轉換邏輯
+            # 補上轉換邏輯
             exhibitions = [to_dict(cursor, row) for row in rows]
         return render_template('admin/dashboard.html', exhibitions=exhibitions)
     finally:
         conn.close()
 
 
-# --- 新增展覽 (自動新增主辦單位) ---
+# --- 新增展覽 (自動新增主辦單位 + 圖片上傳) ---
 @app.route('/admin/create', methods=['GET', 'POST'])
 def admin_create_exhibition():
     if not is_admin(): return redirect(url_for('index'))
@@ -450,10 +539,17 @@ def admin_create_exhibition():
                     cursor.execute("SET NOCOUNT ON; INSERT INTO Organizers (name) VALUES (?); SELECT SCOPE_IDENTITY()", (org_name,))
                     organizer_id = int(cursor.fetchone()[0])  # 用 fetchone() 取 ID
 
-                # 2. 新增展覽
+                # 2. 處理圖片上傳
+                image_path = None
+                if 'exhibition_image' in request.files:
+                    file = request.files['exhibition_image']
+                    if file and file.filename != '':
+                        image_path = save_exhibition_image(file)          
+
+                # 3. 新增展覽
                 cursor.execute("""
-                    INSERT INTO Exhibitions (organizer_id, title, location, description, start_date, end_date, status, validation_pin)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO Exhibitions (organizer_id, title, location, description, start_date, end_date, status, validation_pin, image_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     organizer_id,
                     request.form['title'],
@@ -462,20 +558,22 @@ def admin_create_exhibition():
                     request.form['start_date'],
                     request.form['end_date'],
                     request.form['status'],
-                    request.form.get('validation_pin', '1234')
+                    request.form.get('validation_pin', '1234'),
+                    image_path
                 ))
                 conn.commit()
                 flash(f'新增成功 (主辦: {org_name})')
                 return redirect(url_for('admin_dashboard'))
 
             cursor.execute("SELECT * FROM Organizers")
-            organizers = cursor.fetchall()
+            rows = cursor.fetchall()
+            organizers = [to_dict(cursor, row) for row in rows]
             return render_template('admin/create.html', organizers=organizers)
     finally:
         conn.close()
 
 
-# --- 編輯展覽 (修改內容與上下架) ---
+# --- 編輯展覽 (修改內容與上下架 + 圖片更新) ---
 @app.route('/admin/edit/<int:id>', methods=['GET', 'POST'])
 def admin_edit_exhibition(id):
     if not is_admin(): return redirect(url_for('index'))
@@ -485,15 +583,38 @@ def admin_edit_exhibition(id):
         with conn.cursor() as cursor:
             # POST: 更新資料
             if request.method == 'POST':
+                # 1. 取得目前的圖片路徑
+                cursor.execute("SELECT image_path FROM Exhibitions WHERE exhibition_id = ?", (id,))
+                current = cursor.fetchone()
+                old_image_path = current[0] if current else None
+                
+                # 2. 處理圖片上傳
+                new_image_path = old_image_path  # 預設保留原圖
+                
+                # 檢查是否要刪除現有圖片
+                if request.form.get('delete_image') == '1':
+                    delete_old_image(old_image_path)
+                    new_image_path = None
+                
+                # 檢查是否有上傳新圖片
+                if 'exhibition_image' in request.files:
+                    file = request.files['exhibition_image']
+                    if file and file.filename != '':
+                        # 刪除舊圖
+                        delete_old_image(old_image_path)
+                        # 儲存新圖
+                        new_image_path = save_exhibition_image(file, id)                     
+                
+                # 3. 更新資料庫
                 cursor.execute("""
                     UPDATE Exhibitions 
                     SET title=?, location=?, description=?, 
-                        start_date=?, end_date=?, status=?, validation_pin=?
+                        start_date=?, end_date=?, status=?, validation_pin=?, image_path=?
                     WHERE exhibition_id=?
                 """, (
                     request.form['title'], request.form['location'], request.form['description'],
                     request.form['start_date'], request.form['end_date'], request.form['status'],
-                    request.form['validation_pin'], id
+                    request.form['validation_pin'], new_image_path, id
                 ))
                 conn.commit()
                 flash('展覽修改成功！')
@@ -519,6 +640,54 @@ def admin_edit_exhibition(id):
             return render_template('admin/edit.html', ex=exhibition)
     finally:
         conn.close()
+
+
+# --- 刪除展覽 ---
+@app.route('/admin/delete/<int:id>', methods=['POST'])
+def admin_delete_exhibition(id):
+    if not is_admin(): return redirect(url_for('index'))
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            # 1. 先取得展覽圖片路徑，稍後刪除檔案
+            cursor.execute("SELECT image_path FROM Exhibitions WHERE exhibition_id = ?", (id,))
+            result = cursor.fetchone()
+            image_path = result[0] if result else None
+
+            # 2. 刪除相關聯的資料 (注意外鍵順序)
+            # 2.1 先刪除票券 (Tickets 關聯 Sessions 和 TicketTypes)
+            cursor.execute("""
+                DELETE FROM Tickets 
+                WHERE session_id IN (SELECT session_id FROM Sessions WHERE exhibition_id = ?)
+                   OR ticket_type_id IN (SELECT ticket_type_id FROM TicketTypes WHERE exhibition_id = ?)
+            """, (id, id))
+            
+            # 2.2 刪除場次
+            cursor.execute("DELETE FROM Sessions WHERE exhibition_id = ?", (id,))
+            
+            # 2.3 刪除票種
+            cursor.execute("DELETE FROM TicketTypes WHERE exhibition_id = ?", (id,))
+            
+            # 3. 刪除展覽本身
+            cursor.execute("DELETE FROM Exhibitions WHERE exhibition_id = ?", (id,))
+            
+            conn.commit()
+            
+            # 4. 刪除圖片檔案
+            if image_path:
+                delete_old_image(image_path)
+            
+            flash('展覽已成功刪除！')
+            
+    except Exception as e:
+        conn.rollback()
+        flash(f'刪除失敗: {e}')
+        print(f"刪除展覽錯誤: {e}")
+    finally:
+        conn.close()
+    
+    return redirect(url_for('admin_dashboard'))
 
 
 # --- 管理展覽細項 (場次與票種) ---
