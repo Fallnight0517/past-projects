@@ -70,3 +70,5 @@
 			- 將 flag 藏在 HTTP 的 Header 當中
 		- final_pic.pcapng
 			- 錄製正在請求圖片的封包，需要將封包內的二進位圖片資料轉換回 jpg 檔，才能看到圖片中的 flag
+- Blind SQL Injection 課程
+	- 簡報: https://slides.com/fallnight/blindsqli
